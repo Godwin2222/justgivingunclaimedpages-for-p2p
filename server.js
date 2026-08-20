@@ -192,7 +192,10 @@ app.post('/api/signup', async (req, res) => {
     res.status(200).json({ success: true, claimUrl: claimData.claimUrl });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: 'Something went wrong' });
+    res.status(500).json({
+  error: 'Something went wrong',
+  details: err.message
+});
   }
 });
  
