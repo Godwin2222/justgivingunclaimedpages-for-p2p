@@ -9,13 +9,13 @@ require('dotenv').config();
 const app = express();
 app.use(express.json());
 app.use(cors({
-  origin: 'https://www.pathtopossibilities.org', // your real Squarespace domain
+  origin: 'https://www.pathtopossibilities.co.uk', // your real Squarespace domain
   methods: ['POST'],
 }));
  
 // ---------------- CONFIG ----------------
 // Use api.staging.justgiving.com while testing, api.justgiving.com once live
-const JG_API_BASE = 'https://api.justgiving.com';
+const JG_API_BASE = 'api.staging.justgiving.com';
 const JG_APP_ID = process.env.JUSTGIVING_APP_ID;
 const JG_CHARITY_ID = process.env.JUSTGIVING_CHARITY_ID;
 const JG_EVENT_ID = process.env.JUSTGIVING_EVENT_ID; // optional
@@ -189,6 +189,8 @@ app.post('/api/signup', async (req, res) => {
   }
 });
  
-app.listen(process.env.PORT || 3000, () =>
-  console.log('Server running')
-);
+const PORT = process.env.PORT || 3000;
+
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`Server running on port ${PORT}`);
+});
