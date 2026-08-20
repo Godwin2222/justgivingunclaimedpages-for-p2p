@@ -175,27 +175,73 @@ app.get('/', (req, res) => {
   });
 });
 // ---------------- MAIN SIGNUP ENDPOINT ----------------
+// app.post('/api/signup', async (req, res) => {
+//   try {
+//     const lead = req.body; // { firstName, lastName, email, phone, consent }
+ 
+//     if (!lead.consent) {
+//       return res.status(400).json({ error: 'Consent required' });
+//     }
+ 
+//     const claimData = await createUnclaimedPage(lead);
+//     await logToSheet(lead, claimData);
+//     await fireMetaEvent('Lead', lead);
+//     await fireMetaEvent('ClaimLinkSent', lead, { page: claimData.pageShortName });
+//     await sendClaimEmail(lead, claimData.claimUrl);
+ 
+//     res.status(200).json({ success: true, claimUrl: claimData.claimUrl });
+//   } catch (err) {
+//     console.error(err);
+//     res.status(500).json({
+//   error: 'Something went wrong',
+//   details: err.message
+// });
+//   }
+// });
+
 app.post('/api/signup', async (req, res) => {
   try {
-    const lead = req.body; // { firstName, lastName, email, phone, consent }
- 
+    const lead = req.body;
+
     if (!lead.consent) {
       return res.status(400).json({ error: 'Consent required' });
     }
- 
+
+    console.log('STEP 1: Creating JustGiving page...');
     const claimData = await createUnclaimedPage(lead);
+    console.log('STEP 1 SUCCESS:', claimData);
+
+    console.log('STEP 2: Logging to Google Sheet...');
     await logToSheet(lead, claimData);
+    console.log('STEP 2 SUCCESS');
+
+    console.log('STEP 3: Sending Meta Lead event...');
     await fireMetaEvent('Lead', lead);
-    await fireMetaEvent('ClaimLinkSent', lead, { page: claimData.pageShortName });
+    console.log('STEP 3 SUCCESS');
+
+    console.log('STEP 4: Sending Meta ClaimLinkSent event...');
+    await fireMetaEvent('ClaimLinkSent', lead, {
+      page: claimData.pageShortName
+    });
+    console.log('STEP 4 SUCCESS');
+
+    console.log('STEP 5: Sending claim email...');
     await sendClaimEmail(lead, claimData.claimUrl);
- 
-    res.status(200).json({ success: true, claimUrl: claimData.claimUrl });
+    console.log('STEP 5 SUCCESS');
+
+    res.status(200).json({
+      success: true,
+      claimUrl: claimData.claimUrl
+    });
+
   } catch (err) {
-    console.error(err);
+    console.error('SIGNUP ERROR:', err);
+    console.error('STACK:', err.stack);
+
     res.status(500).json({
-  error: 'Something went wrong',
-  details: err.message
-});
+      error: 'Something went wrong',
+      details: err.message
+    });
   }
 });
  
