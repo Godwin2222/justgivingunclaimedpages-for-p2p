@@ -27,7 +27,10 @@ const META_ACCESS_TOKEN = process.env.META_CONVERSIONS_API_TOKEN;
  
 const SHEET_ID = process.env.GOOGLE_SHEET_ID;
 const auth = new google.auth.GoogleAuth({
-  keyFile: 'google-service-account.json',
+  credentials: {
+    client_email: process.env.GOOGLE_CLIENT_EMAIL,
+    private_key: process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n'),
+  },
   scopes: ['https://www.googleapis.com/auth/spreadsheets'],
 });
 const sheets = google.sheets({ version: 'v4', auth });
@@ -90,7 +93,7 @@ console.log('JUSTGIVING RESPONSE:', JSON.stringify(response.data, null, 2));
  
   // response.data includes: claimToken, pageGuid, signOnUrl, next.url (the claim link)
   return {
-    claimUrl: response.data.next.url,
+    claimUrl: response.data.signOnUrl,
     pageShortName: payload.pageShortName,
     pageGuid: response.data.pageGuid,
   };
