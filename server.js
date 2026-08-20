@@ -71,13 +71,22 @@ async function createUnclaimedPage(lead) {
   // endpoint takes NO authentication at creation time. Do not send an
   // Authorization header; it causes the request to fail. Authentication
   // happens later, when the supporter clicks their claim link.
-  const response = await axios.put(
-    `${JG_API_BASE}/${JG_APP_ID}/v1/fundraising/unclaimedpages`,
-    payload,
-    {
-      headers: { 'Content-Type': 'application/json' },
-    }
-  );
+//   const response = await axios.put(
+//     `${JG_API_BASE}/${JG_APP_ID}/v1/fundraising/unclaimedpages`,
+//     payload,
+//     {
+//       headers: { 'Content-Type': 'application/json' },
+//     }
+//   );
+const response = await axios.put(
+  `${JG_API_BASE}/${JG_APP_ID}/v1/fundraising/unclaimedpages`,
+  payload,
+  {
+    headers: { 'Content-Type': 'application/json' },
+  }
+);
+
+console.log('JUSTGIVING RESPONSE:', JSON.stringify(response.data, null, 2));
  
   // response.data includes: claimToken, pageGuid, signOnUrl, next.url (the claim link)
   return {
