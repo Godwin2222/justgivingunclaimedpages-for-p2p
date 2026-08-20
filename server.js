@@ -167,6 +167,13 @@ async function sendClaimEmail(lead, claimUrl) {
   }
 }
  
+// Health check
+app.get('/', (req, res) => {
+  res.status(200).json({
+    status: 'ok',
+    message: 'Hike for Change backend is running'
+  });
+});
 // ---------------- MAIN SIGNUP ENDPOINT ----------------
 app.post('/api/signup', async (req, res) => {
   try {
