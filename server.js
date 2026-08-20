@@ -24,6 +24,11 @@ const FUNDRAISING_TARGET = "500"; // suggested GBP target, adjust as needed
  
 const META_PIXEL_ID = process.env.META_PIXEL_ID;
 const META_ACCESS_TOKEN = process.env.META_CONVERSIONS_API_TOKEN;
+
+console.log('META CONFIG:', {
+  pixelId: META_PIXEL_ID ? 'SET' : 'MISSING',
+  accessToken: META_ACCESS_TOKEN ? 'SET' : 'MISSING'
+});
  
 const SHEET_ID = process.env.GOOGLE_SHEET_ID;
 const auth = new google.auth.GoogleAuth({
@@ -128,22 +133,44 @@ function hashSHA256(value) {
 }
  
 async function fireMetaEvent(eventName, lead, extraData = {}) {
-  await axios.post(
-    `https://graph.facebook.com/v19.0/${META_PIXEL_ID}/events`,
-    {
-      data: [{
-        event_name: eventName, // 'Lead' | 'ClaimLinkSent' | 'PageClaimed'
-        event_time: Math.floor(Date.now() / 1000),
-        action_source: 'website',
-        user_data: {
-          em: [hashSHA256(lead.email)],
-          ph: lead.phone ? [hashSHA256(lead.phone)] : undefined,
-        },
-        custom_data: extraData,
-      }],
-      access_token: META_ACCESS_TOKEN,
-    }
-  );
+  // Check that Meta credentials exist
+  if (!META_PIXEL_ID || !META_ACCESS_TOKEN) {
+    console.warn(
+      `META CONFIG MISSING - Skipping ${eventName} event`
+    );
+    return;
+  }
+
+  try {
+    const response = await axios.post(
+      `https://graph.facebook.com/v19.0/${META_PIXEL_ID}/events`,
+      {
+        data: [{
+          event_name: eventName,
+          event_time: Math.floor(Date.now() / 1000),
+          action_source: 'website',
+          user_data: {
+            em: [hashSHA256(lead.email)],
+            ph: lead.phone
+              ? [hashSHA256(lead.phone)]
+              : undefined,
+          },
+          custom_data: extraData,
+        }],
+        access_token: META_ACCESS_TOKEN,
+      }
+    );
+
+    console.log(`META SUCCESS: ${eventName}`, response.data);
+
+  } catch (error) {
+    console.error(
+      `META ERROR: ${eventName}`,
+      error.response?.data || error.message
+    );
+
+    // Don't stop the signup process if Meta fails
+  }
 }
  
 // ---------------- STEP 4: send the claim email / WhatsApp ----------------
