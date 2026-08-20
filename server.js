@@ -15,7 +15,7 @@ app.use(cors({
  
 // ---------------- CONFIG ----------------
 // Use api.staging.justgiving.com while testing, api.justgiving.com once live
-const JG_API_BASE = 'api.staging.justgiving.com';
+const JG_API_BASE = process.env.JUSTGIVING_API_BASE || 'https://api.staging.justgiving.com';
 const JG_APP_ID = process.env.JUSTGIVING_APP_ID;
 const JG_CHARITY_ID = process.env.JUSTGIVING_CHARITY_ID;
 const JG_EVENT_ID = process.env.JUSTGIVING_EVENT_ID; // optional
