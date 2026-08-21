@@ -3,7 +3,6 @@ const cors = require('cors');
 const axios = require('axios');
 const crypto = require('crypto');
 const { google } = require('googleapis');
-const nodemailer = require('nodemailer');
 require('dotenv').config();
  
 const app = express();
@@ -29,6 +28,8 @@ console.log('META CONFIG:', {
   pixelId: META_PIXEL_ID ? 'SET' : 'MISSING',
   accessToken: META_ACCESS_TOKEN ? 'SET' : 'MISSING'
 });
+
+const KLAVIYO_PRIVATE_API_KEY = process.env.KLAVIYO_PRIVATE_API_KEY;
  
 const SHEET_ID = process.env.GOOGLE_SHEET_ID;
 const auth = new google.auth.GoogleAuth({
@@ -40,11 +41,7 @@ const auth = new google.auth.GoogleAuth({
 });
 const sheets = google.sheets({ version: 'v4', auth });
  
-const transporter = nodemailer.createTransport({
-  host: 'smtp.sendgrid.net',
-  port: 587,
-  auth: { user: 'apikey', pass: process.env.SENDGRID_API_KEY },
-});
+
  
 // ---------------- STEP 1: create the unclaimed JustGiving page ----------------
 async function createUnclaimedPage(lead) {
@@ -173,38 +170,79 @@ async function fireMetaEvent(eventName, lead, extraData = {}) {
   }
 }
  
-// ---------------- STEP 4: send the claim email / WhatsApp ----------------
-async function sendClaimEmail(lead, claimUrl) {
-  await transporter.sendMail({
-    from: '"Path to Possibilities" <hello@pathtopossibilities.org>',
-    to: lead.email,
-    subject: `${lead.firstName}, your Hike for Change fundraising page is ready`,
-    html: `
-      <p>Hi ${lead.firstName},</p>
-      <p>Thank you for signing up for Hike for Change! Your fundraising
-      page is ready — it just takes 60 seconds to claim it and make it
-      yours.</p>
-      <p><a href="${claimUrl}" style="background:#111;color:#fff;
-      padding:12px 20px;text-decoration:none;border-radius:6px;">
-      Claim Your Fundraising Page</a></p>
-      <p>Once claimed, you can add your own photo, set your story, and
-      start sharing with friends and family.</p>
-      <p>See you on the trail,<br/>The Path to Possibilities Team</p>
-    `,
-  });
- 
-  if (lead.phone && process.env.TWILIO_SID) {
-    const twilio = require('twilio')(
-      process.env.TWILIO_SID, process.env.TWILIO_AUTH_TOKEN
+// ---------------- STEP 4: send claim event to Klaviyo ----------------
+async function sendClaimEmail(lead, claimUrl, pageShortName) {
+  console.log('KLAVIYO: Starting...');
+
+  if (!KLAVIYO_PRIVATE_API_KEY) {
+    throw new Error('KLAVIYO_PRIVATE_API_KEY is not configured');
+  }
+
+  if (!lead.email) {
+    throw new Error('Lead email is required for Klaviyo');
+  }
+
+  try {
+    const response = await axios.post(
+      'https://a.klaviyo.com/api/events',
+      {
+        data: {
+          type: 'event',
+          attributes: {
+            metric: {
+              data: {
+                type: 'metric',
+                attributes: {
+                  name: 'ClaimLinkSent'
+                }
+              }
+            },
+            profile: {
+              data: {
+                type: 'profile',
+                attributes: {
+                  email: lead.email,
+                  first_name: lead.firstName,
+                  last_name: lead.lastName,
+                  ...(lead.phone ? {
+                    phone_number: lead.phone
+                  } : {})
+                }
+              }
+            },
+            properties: {
+              claim_url: claimUrl,
+              page_short_name: pageShortName,
+              page_title: 'My Hike for Change Fundraising Page',
+              campaign: 'Hike for Change'
+            },
+            time: new Date().toISOString(),
+            unique_id: `claim-link-${pageShortName}`
+          }
+        }
+      },
+      {
+        headers: {
+          'Authorization': `Klaviyo-API-Key ${KLAVIYO_PRIVATE_API_KEY}`,
+          'Content-Type': 'application/vnd.api+json',
+          'Accept': 'application/json',
+          'Revision': '2026-07-15'
+        }
+      }
     );
-    await twilio.messages.create({
-      from: 'whatsapp:' + process.env.TWILIO_WHATSAPP_NUMBER,
-      to: 'whatsapp:' + lead.phone,
-      body: `Hi ${lead.firstName}! Your Hike for Change fundraising page ` +
-        `is ready. Claim it here: ${claimUrl}`,
-    });
+
+    console.log('KLAVIYO SUCCESS:', response.status);
+
+  } catch (error) {
+    console.error(
+      'KLAVIYO ERROR:',
+      error.response?.data || error.message
+    );
+
+    throw error;
   }
 }
+ 
  
 // Health check
 app.get('/', (req, res) => {
@@ -264,9 +302,15 @@ app.post('/api/signup', async (req, res) => {
     });
     console.log('STEP 4 SUCCESS');
 
-    console.log('STEP 5: Sending claim email...');
-    await sendClaimEmail(lead, claimData.claimUrl);
-    console.log('STEP 5 SUCCESS');
+    console.log('STEP 5: Sending claim event to Klaviyo...');
+
+    await sendClaimEmail(
+    lead,
+    claimData.claimUrl,
+    claimData.pageShortName
+    );
+
+console.log('STEP 5 SUCCESS');
 
     res.status(200).json({
       success: true,
