@@ -24,6 +24,7 @@ const crypto = require('crypto');
 const { google } = require('googleapis');
 
 const JG_API_BASE = process.env.JUSTGIVING_API_BASE || 'https://api.justgiving.com';
+const JG_APP_ID = process.env.JUSTGIVING_APP_ID;
 const FUNDRAISING_TARGET = Number(process.env.FUNDRAISING_TARGET || 500);
 
 const META_PIXEL_ID = process.env.META_PIXEL_ID;
@@ -60,8 +61,13 @@ function hashSHA256(value) {
 // trim this down to just that one.
 async function fetchPageStats(pageShortName) {
   const { data } = await axios.get(
-    `${JG_API_BASE}/v1/fundraising/pages/${pageShortName}`
+    `${JG_API_BASE}/${JG_APP_ID}/v1/fundraising/pages/${pageShortName}`
   );
+
+  // TEMPORARY — logs the full raw response so we can confirm the real field
+  // names in the next test run, instead of guessing. Remove this line once
+  // you've confirmed the fields below are correct.
+  console.log(`RAW JUSTGIVING PAGE STATS for ${pageShortName}:`, JSON.stringify(data, null, 2));
 
   const claimed =
     data.status === 'Claimed' ||
