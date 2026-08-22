@@ -295,10 +295,13 @@ async function runFollowUpCheck() {
 
 function startFollowUpJob() {
   const cron = require('node-cron');
-  cron.schedule('0 */6 * * *', () => {
+  // TESTING: every 5 minutes. Switch back to '0 */6 * * *' (every 6 hours)
+  // before this goes live for real — every 5 minutes will hammer the
+  // JustGiving API and Klaviyo with unnecessary calls at real volume.
+  cron.schedule('*/5 * * * *', () => {
     runFollowUpCheck().catch((err) => console.error('FOLLOW-UP JOB ERROR:', err));
   });
-  console.log('Follow-up job scheduled (every 6 hours).');
+  console.log('Follow-up job scheduled (every 5 minutes — TESTING MODE).');
 }
 
 module.exports = startFollowUpJob;
