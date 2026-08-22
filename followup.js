@@ -10,14 +10,14 @@
 //   4. Fires a Klaviyo event on claim, and one per newly-crossed milestone
 //   5. Fires the Meta "PageClaimed" event so they drop out of retargeting
 //
-// IMPORTANT — before wiring this into production:
-// The GET endpoint below (`/v1/fundraising/pages/{pageShortName}`) has NOT
-// been verified against a real response the way your PUT (create page)
-// endpoint was in Postman. Run one test call against a real staging page,
-// log the full response, and confirm the actual field names for "claimed"
-// and "amount raised" — then adjust extractPageStats() below. Do this the
-// same way you did the Postman spike in Section 5.3 of the guide, before
-// trusting this job with real donor data.
+// STATUS (as of last test):
+// - Fixed: GET call was missing the JG_APP_ID path segment, causing 403s.
+// - Confirmed real fields: raised amount = grandTotalRaisedExcludingGiftAid,
+//   per-page target = fundraisingTarget, donations = donationCount.
+// - STILL UNKNOWN: which field flips when a page is claimed. "status" stays
+//   "Active" even on unclaimed pages, so it's not the signal. claimed is
+//   hardcoded to false below until we diff a real claimed-page response
+//   against an unclaimed one (claim a test page, compare the two RAW logs).
 
 const axios = require('axios');
 const crypto = require('crypto');
@@ -56,33 +56,28 @@ function hashSHA256(value) {
 }
 
 // ---------------- JustGiving: read claim + amount status ----------------
-// TODO: confirm real field names via Postman before trusting this in prod.
-// Candidates are tried in order; whichever your test call actually returns,
-// trim this down to just that one.
 async function fetchPageStats(pageShortName) {
   const { data } = await axios.get(
     `${JG_API_BASE}/${JG_APP_ID}/v1/fundraising/pages/${pageShortName}`
   );
 
-  // TEMPORARY — logs the full raw response so we can confirm the real field
-  // names in the next test run, instead of guessing. Remove this line once
-  // you've confirmed the fields below are correct.
+  // TEMPORARY — keep this until we've confirmed the "claimed" field below by
+  // diffing an actual claimed page against an unclaimed one.
   console.log(`RAW JUSTGIVING PAGE STATS for ${pageShortName}:`, JSON.stringify(data, null, 2));
 
-  const claimed =
-    data.status === 'Claimed' ||
-    data.hasBeenClaimed === true ||
-    data.pageStatus === 'Claimed' ||
-    false;
+  // STILL UNCONFIRMED: "status" is "Active" even on pages that have never
+  // been claimed, so it does NOT reliably indicate claim status. Leaving
+  // this as a placeholder until we diff a real claimed-page response —
+  // claimed will stay false for everyone until this is fixed, which just
+  // means the "PageClaimed" email won't fire yet (safe failure mode).
+  const claimed = false; // TODO: replace once we know the real signal
 
-  const raisedAmount =
-    data.grandTotalRaisedIncTax ??
-    data.raisedAmount ??
-    data.totalRaised ??
-    data.summary?.totalRaisedOnJustGiving ??
-    0;
+  // CONFIRMED from real staging response:
+  const raisedAmount = Number(data.grandTotalRaisedExcludingGiftAid ?? 0);
+  const targetAmount = Number(data.fundraisingTarget) || FUNDRAISING_TARGET;
+  const donationCount = Number(data.donationCount ?? 0);
 
-  return { claimed, raisedAmount: Number(raisedAmount) || 0 };
+  return { claimed, raisedAmount, targetAmount, donationCount };
 }
 
 // ---------------- Meta Conversions API ----------------
@@ -228,7 +223,7 @@ async function runFollowUpCheck() {
       updates.I = stats.raisedAmount;
     }
 
-    const percentRaised = Math.floor((stats.raisedAmount / FUNDRAISING_TARGET) * 100);
+    const percentRaised = Math.floor((stats.raisedAmount / stats.targetAmount) * 100);
     const newlyCrossed = MILESTONES.filter((m) => percentRaised >= m && !milestonesSent.includes(m));
 
     if (newlyCrossed.length > 0) {
@@ -239,7 +234,7 @@ async function runFollowUpCheck() {
           {
             milestone_percent: milestone,
             amount_raised: stats.raisedAmount,
-            target_amount: FUNDRAISING_TARGET,
+            target_amount: stats.targetAmount,
             page_short_name: pageShortName,
             claim_url: claimUrl,
           },
