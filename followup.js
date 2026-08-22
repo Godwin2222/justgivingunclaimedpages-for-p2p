@@ -73,17 +73,22 @@ async function fetchPageStats(pageShortName) {
   return { claimed, raisedAmount, targetAmount, donationCount };
 }
 
+// Builds the live public fundraising page URL, e.g.
+// https://www.staging.justgiving.com/fundraising/{pageShortName}
+function getPublicPageUrl(pageShortName) {
+  const siteDomain = JG_API_BASE.includes('staging')
+    ? 'https://www.staging.justgiving.com'
+    : 'https://www.justgiving.com';
+  return `${siteDomain}/fundraising/${pageShortName}`;
+}
+
 // Live-site check: a claimed page resolves normally at /fundraising/{shortName}.
 // Confirmed correct against real claimed test pages. Uses the PUBLIC site
 // domain (not the API), since this checks the actual page JustGiving shows
 // visitors, not an API resource.
 async function checkIfClaimed(pageShortName) {
-  const siteDomain = JG_API_BASE.includes('staging')
-    ? 'https://www.staging.justgiving.com'
-    : 'https://www.justgiving.com';
-
   try {
-    const res = await axios.get(`${siteDomain}/fundraising/${pageShortName}`, {
+    const res = await axios.get(getPublicPageUrl(pageShortName), {
       maxRedirects: 0,
       validateStatus: () => true,
     });
@@ -226,9 +231,16 @@ async function runFollowUpCheck() {
       updates.G = 'Yes';
       updates.H = new Date().toISOString();
 
+      const pageUrl = getPublicPageUrl(pageShortName);
+
       await Promise.allSettled([
         fireMetaEvent('PageClaimed', lead, { page: pageShortName }),
-        sendKlaviyoEvent('PageClaimed', lead, { page_short_name: pageShortName, claim_url: claimUrl }, { page_claimed: true }),
+        sendKlaviyoEvent(
+          'PageClaimed',
+          lead,
+          { page_short_name: pageShortName, claim_url: claimUrl, page_url: pageUrl },
+          { page_claimed: true }
+        ),
       ]);
     }
 
@@ -241,6 +253,7 @@ async function runFollowUpCheck() {
     const newlyCrossed = MILESTONES.filter((m) => percentRaised >= m && !milestonesSent.includes(m));
 
     if (newlyCrossed.length > 0) {
+      const pageUrl = getPublicPageUrl(pageShortName);
       for (const milestone of newlyCrossed) {
         await sendKlaviyoEvent(
           'FundraisingMilestoneReached',
@@ -251,6 +264,7 @@ async function runFollowUpCheck() {
             target_amount: stats.targetAmount,
             page_short_name: pageShortName,
             claim_url: claimUrl,
+            page_url: pageUrl,
           },
           { percent_raised: percentRaised }
         );
