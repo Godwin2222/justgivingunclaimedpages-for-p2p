@@ -114,11 +114,27 @@ async function createUnclaimedPage(lead) {
 
   console.log('JUSTGIVING RESPONSE:', JSON.stringify(response.data, null, 2));
 
+  // Immediately capture the page's starting consumerId. JustGiving's own
+  // Claim API docs confirm: "the page will then be re-associated to their
+  // consumerId" once claimed. Capturing this baseline right now, before any
+  // chance of a real claim happening, is what lets followup.js later detect
+  // a claim by checking whether consumerId has changed from this value.
+  let initialConsumerId = null;
+  try {
+    const statusRes = await axios.get(
+      `${JG_API_BASE}/${JG_APP_ID}/v1/fundraising/pages/${payload.pageShortName}`
+    );
+    initialConsumerId = statusRes.data.consumerId;
+  } catch (err) {
+    console.error('Could not capture initial consumerId (non-fatal):', err.message);
+  }
+
   // response.data includes: claimToken, pageGuid, signOnUrl, next.url (the claim link)
   return {
     claimUrl: response.data.signOnUrl,
     pageShortName: payload.pageShortName,
     pageGuid: response.data.pageGuid,
+    initialConsumerId,
   };
 }
 
@@ -135,11 +151,14 @@ async function logToSheet(lead, claimData) {
     '',                                            // H: Date claimed
     0,                                              // I: Amount raised
     claimData.pageShortName,                        // J: Page short name
+    '',                                               // K: Milestones Sent (filled later)
+    '',                                                // L: No-Raise Reminders Sent (filled later)
+    claimData.initialConsumerId ?? '',                  // M: Initial Consumer ID (claim-detection baseline)
   ];
 
   await sheets.spreadsheets.values.append({
     spreadsheetId: SHEET_ID,
-    range: 'Tracker!A:J',
+    range: 'Tracker!A:M',
     valueInputOption: 'USER_ENTERED',
     requestBody: { values: [row] },
   });

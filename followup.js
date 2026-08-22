@@ -14,11 +14,13 @@
 // - Fixed: GET call was missing the JG_APP_ID path segment, causing 403s.
 // - Confirmed real fields: raised amount = grandTotalRaisedExcludingGiftAid,
 //   per-page target = fundraisingTarget, donations = donationCount.
-// - CONFIRMED via before/after diff on a real claimed page: the pages API
-//   has NO claim-status field at all — it returns identically whether a
-//   page is claimed or not. Claim detection instead checks the live public
-//   URL directly (see checkIfClaimed below) — a claimed page resolves at
-//   /fundraising/{shortName}, an unclaimed one does not.
+// - Claim detection: the pages API has no dedicated "claimed" field, and
+//   the live-URL-status trick gave false positives for EVERY page. Now
+//   using consumerId instead, per JustGiving's own Claim API docs: "the
+//   page will then be re-associated to their consumerId" once claimed.
+//   server.js captures the starting consumerId at signup time (column M,
+//   "Initial Consumer ID") — this file just checks whether the current
+//   consumerId differs from that baseline.
 
 const axios = require('axios');
 const crypto = require('crypto');
@@ -62,45 +64,14 @@ async function fetchPageStats(pageShortName) {
     `${JG_API_BASE}/${JG_APP_ID}/v1/fundraising/pages/${pageShortName}`
   );
 
-  // TEMPORARY — keep until claim detection below has been confirmed once
-  // more against this new method, then this can come out.
   console.log(`RAW JUSTGIVING PAGE STATS for ${pageShortName}:`, JSON.stringify(data, null, 2));
-
-  // CONFIRMED: the pages API response is identical before and after a real
-  // claim (tested directly — see conversation log 2026-08-22). It has no
-  // claim-status field at all. Claim status is instead detected by whether
-  // the page's live "/fundraising/" URL actually resolves — unclaimed pages
-  // live at "/id/{shortName}", claimed ones redirect to "/fundraising/{shortName}".
-  const claimed = await checkIfClaimed(pageShortName);
 
   const raisedAmount = Number(data.grandTotalRaisedExcludingGiftAid ?? 0);
   const targetAmount = Number(data.fundraisingTarget) || FUNDRAISING_TARGET;
   const donationCount = Number(data.donationCount ?? 0);
+  const consumerId = data.consumerId;
 
-  return { claimed, raisedAmount, targetAmount, donationCount };
-}
-
-// Live-site check: a claimed page resolves at /fundraising/{shortName}.
-// An unclaimed one either 404s there or redirects back to /id/{shortName}.
-// We use the PUBLIC site domain (not the API), since this is checking the
-// actual page JustGiving shows visitors, not an API resource.
-async function checkIfClaimed(pageShortName) {
-  const siteDomain = JG_API_BASE.includes('staging')
-    ? 'https://www.staging.justgiving.com'
-    : 'https://www.justgiving.com';
-
-  try {
-    const res = await axios.get(`${siteDomain}/fundraising/${pageShortName}`, {
-      maxRedirects: 0,          // don't silently follow a bounce-back redirect
-      validateStatus: () => true, // handle all status codes ourselves below
-    });
-    // A genuine claimed page loads normally (200). Anything else — a 404,
-    // or a 3xx redirect (typically back to /id/{shortName}) — means unclaimed.
-    return res.status === 200;
-  } catch (err) {
-    console.error(`checkIfClaimed failed for ${pageShortName}:`, err.message);
-    return false; // fail safe: treat a network error as "not claimed yet"
-  }
+  return { raisedAmount, targetAmount, donationCount, consumerId };
 }
 
 // ---------------- Meta Conversions API ----------------
@@ -176,8 +147,8 @@ async function sendKlaviyoEvent(metricName, lead, properties = {}, profileProper
 async function getAllRows() {
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: SHEET_ID,
-    // K = Milestones Sent, L = No-Raise Reminders Sent (both new columns)
-    range: 'Tracker!A:L',
+    // K = Milestones Sent, L = No-Raise Reminders Sent, M = Initial Consumer ID
+    range: 'Tracker!A:M',
   });
   return res.data.values || [];
 }
@@ -206,7 +177,7 @@ async function runFollowUpCheck() {
     const [
       name, email, phone, dateCaptured, claimUrl,
       sentStatus, claimedFlag, dateClaimed, amountRaised,
-      pageShortName, milestonesSentRaw, noRaiseSentRaw
+      pageShortName, milestonesSentRaw, noRaiseSentRaw, initialConsumerId
     ] = dataRows[i];
 
     const milestonesSent = (milestonesSentRaw || '').split(',').filter(Boolean).map(Number);
@@ -231,7 +202,22 @@ async function runFollowUpCheck() {
     const wasClaimed = claimedFlag === 'Yes';
 
     // ---- 1. Detect a fresh claim ----
-    if (stats.claimed && !wasClaimed) {
+    // A page is claimed once its live consumerId differs from the baseline
+    // we captured at signup (column M). Rows created before this fix won't
+    // have a baseline — those are handled just below.
+    let stillClaimed = false;
+    if (!initialConsumerId) {
+      // No baseline stored (row predates this fix, or the initial fetch
+      // failed at signup time). Capture one now as a fallback so future
+      // checks on this row can work — but we can't tell if it's ALREADY
+      // been claimed by this point, so we skip claim detection this cycle
+      // rather than risk a wrong guess either way.
+      updates.M = String(stats.consumerId);
+    } else if (String(stats.consumerId) !== String(initialConsumerId)) {
+      stillClaimed = true;
+    }
+
+    if (stillClaimed && !wasClaimed) {
       updates.G = 'Yes';
       updates.H = new Date().toISOString();
 
@@ -300,7 +286,7 @@ async function runFollowUpCheck() {
     // make sure page_claimed is accurate on the profile, which step 1 already did.
     // If NOT claimed yet, refresh the profile property so the Flow's conditional
     // split sees the latest state whenever it evaluates.
-    if (!stats.claimed) {
+    if (!stillClaimed) {
       await sendKlaviyoEvent(
         'FollowUpStatusCheck',
         lead,
