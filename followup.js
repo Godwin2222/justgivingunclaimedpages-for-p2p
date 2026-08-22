@@ -14,10 +14,11 @@
 // - Fixed: GET call was missing the JG_APP_ID path segment, causing 403s.
 // - Confirmed real fields: raised amount = grandTotalRaisedExcludingGiftAid,
 //   per-page target = fundraisingTarget, donations = donationCount.
-// - STILL UNKNOWN: which field flips when a page is claimed. "status" stays
-//   "Active" even on unclaimed pages, so it's not the signal. claimed is
-//   hardcoded to false below until we diff a real claimed-page response
-//   against an unclaimed one (claim a test page, compare the two RAW logs).
+// - CONFIRMED via before/after diff on a real claimed page: the pages API
+//   has NO claim-status field at all — it returns identically whether a
+//   page is claimed or not. Claim detection instead checks the live public
+//   URL directly (see checkIfClaimed below) — a claimed page resolves at
+//   /fundraising/{shortName}, an unclaimed one does not.
 
 const axios = require('axios');
 const crypto = require('crypto');
@@ -61,23 +62,45 @@ async function fetchPageStats(pageShortName) {
     `${JG_API_BASE}/${JG_APP_ID}/v1/fundraising/pages/${pageShortName}`
   );
 
-  // TEMPORARY — keep this until we've confirmed the "claimed" field below by
-  // diffing an actual claimed page against an unclaimed one.
+  // TEMPORARY — keep until claim detection below has been confirmed once
+  // more against this new method, then this can come out.
   console.log(`RAW JUSTGIVING PAGE STATS for ${pageShortName}:`, JSON.stringify(data, null, 2));
 
-  // STILL UNCONFIRMED: "status" is "Active" even on pages that have never
-  // been claimed, so it does NOT reliably indicate claim status. Leaving
-  // this as a placeholder until we diff a real claimed-page response —
-  // claimed will stay false for everyone until this is fixed, which just
-  // means the "PageClaimed" email won't fire yet (safe failure mode).
-  const claimed = false; // TODO: replace once we know the real signal
+  // CONFIRMED: the pages API response is identical before and after a real
+  // claim (tested directly — see conversation log 2026-08-22). It has no
+  // claim-status field at all. Claim status is instead detected by whether
+  // the page's live "/fundraising/" URL actually resolves — unclaimed pages
+  // live at "/id/{shortName}", claimed ones redirect to "/fundraising/{shortName}".
+  const claimed = await checkIfClaimed(pageShortName);
 
-  // CONFIRMED from real staging response:
   const raisedAmount = Number(data.grandTotalRaisedExcludingGiftAid ?? 0);
   const targetAmount = Number(data.fundraisingTarget) || FUNDRAISING_TARGET;
   const donationCount = Number(data.donationCount ?? 0);
 
   return { claimed, raisedAmount, targetAmount, donationCount };
+}
+
+// Live-site check: a claimed page resolves at /fundraising/{shortName}.
+// An unclaimed one either 404s there or redirects back to /id/{shortName}.
+// We use the PUBLIC site domain (not the API), since this is checking the
+// actual page JustGiving shows visitors, not an API resource.
+async function checkIfClaimed(pageShortName) {
+  const siteDomain = JG_API_BASE.includes('staging')
+    ? 'https://www.staging.justgiving.com'
+    : 'https://www.justgiving.com';
+
+  try {
+    const res = await axios.get(`${siteDomain}/fundraising/${pageShortName}`, {
+      maxRedirects: 0,          // don't silently follow a bounce-back redirect
+      validateStatus: () => true, // handle all status codes ourselves below
+    });
+    // A genuine claimed page loads normally (200). Anything else — a 404,
+    // or a 3xx redirect (typically back to /id/{shortName}) — means unclaimed.
+    return res.status === 200;
+  } catch (err) {
+    console.error(`checkIfClaimed failed for ${pageShortName}:`, err.message);
+    return false; // fail safe: treat a network error as "not claimed yet"
+  }
 }
 
 // ---------------- Meta Conversions API ----------------
