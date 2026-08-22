@@ -19,7 +19,9 @@ const JG_APP_ID = process.env.JUSTGIVING_APP_ID;
 const JG_CHARITY_ID = process.env.JUSTGIVING_CHARITY_ID;
 const JG_EVENT_ID = process.env.JUSTGIVING_EVENT_ID; // optional
 const JG_CAMPAIGN_GUID = process.env.JUSTGIVING_CAMPAIGN_GUID; // optional
-const FUNDRAISING_TARGET = "500"; // suggested GBP target, adjust as needed
+// Read from env so this always matches followup.js's milestone math —
+// change it in one place (your .env / Render env vars), not two files.
+const FUNDRAISING_TARGET = process.env.FUNDRAISING_TARGET || "500";
 
 const META_PIXEL_ID = process.env.META_PIXEL_ID;
 const META_ACCESS_TOKEN = process.env.META_CONVERSIONS_API_TOKEN;
@@ -350,3 +352,8 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`Server running on port ${PORT}`);
 });
+
+// Starts the every-6-hours lifecycle check: claim detection, fundraising
+// milestone emails, and the "haven't started raising" nudges. Lives in
+// followup.js — must be in the same folder as this file.
+require('./followup')();
