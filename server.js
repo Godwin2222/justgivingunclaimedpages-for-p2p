@@ -158,11 +158,18 @@ async function logToSheet(lead, claimData) {
     '',                                                // L: No-Raise Reminders Sent (filled later)
     claimData.initialConsumerId ?? '',                  // M: Initial Consumer ID (claim-detection baseline)
     lead.gaClientId || '',                                // N: GA4 Client ID
+    lead.hikingAs || '',                                   // O: Hiking As (Individual/Team/Family)
+    lead.teamName || '',                                    // P: Team Name
+    lead.teamSize || '',                                     // Q: Team Size
+    lead.familySize || '',                                    // R: Family Size
+    lead.hoodieSize || '',                                     // S: Hoodie Size
+    lead.hikingReason || '',                                     // T: Hiking Reason
+    lead.referralSource || '',                                    // U: Referral Source
   ];
 
   await sheets.spreadsheets.values.append({
     spreadsheetId: SHEET_ID,
-    range: 'Tracker!A:N',
+    range: 'Tracker!A:U',
     valueInputOption: 'USER_ENTERED',
     requestBody: { values: [row] },
   });
@@ -332,7 +339,7 @@ app.post('/api/signup', async (req, res) => {
   if (!lead.consent) {
     return res.status(400).json({ error: 'Consent required' });
   }
-  if (!lead.email || !lead.firstName || !lead.lastName) {
+  if (!lead.email || !lead.firstName || !lead.lastName || !lead.phone) {
     return res.status(400).json({ error: 'Missing required fields' });
   }
 
