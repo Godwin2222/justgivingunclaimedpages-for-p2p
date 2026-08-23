@@ -33,6 +33,9 @@ console.log('META CONFIG:', {
 
 const KLAVIYO_PRIVATE_API_KEY = process.env.KLAVIYO_PRIVATE_API_KEY;
 
+const GA_MEASUREMENT_ID = process.env.GA_MEASUREMENT_ID;
+const GA_API_SECRET = process.env.GA_API_SECRET;
+
 const SHEET_ID = process.env.GOOGLE_SHEET_ID;
 const auth = new google.auth.GoogleAuth({
   credentials: {
@@ -154,11 +157,12 @@ async function logToSheet(lead, claimData) {
     '',                                               // K: Milestones Sent (filled later)
     '',                                                // L: No-Raise Reminders Sent (filled later)
     claimData.initialConsumerId ?? '',                  // M: Initial Consumer ID (claim-detection baseline)
+    lead.gaClientId || '',                                // N: GA4 Client ID
   ];
 
   await sheets.spreadsheets.values.append({
     spreadsheetId: SHEET_ID,
-    range: 'Tracker!A:M',
+    range: 'Tracker!A:N',
     valueInputOption: 'USER_ENTERED',
     requestBody: { values: [row] },
   });
@@ -215,6 +219,38 @@ async function fireMetaEvent(eventName, lead, extraData = {}, eventId = undefine
     );
     // Don't stop the signup process if Meta fails — errors here are
     // swallowed by design; caller does not need to handle rejection.
+  }
+}
+
+// ---------------- GA4 Measurement Protocol ----------------
+// GA4 event names must be snake_case, <=40 chars, letters/numbers/
+// underscores only. clientId ties this event to the visitor's real GA4
+// session (captured from the _ga cookie at signup) — if it's missing
+// (ad blocker, cookie not set yet), we just skip sending rather than
+// send a disconnected anonymous event.
+async function fireGA4Event(clientId, eventName, params = {}) {
+  if (!GA_MEASUREMENT_ID || !GA_API_SECRET) {
+    console.warn(`GA4 CONFIG MISSING - Skipping ${eventName} event`);
+    return;
+  }
+  if (!clientId) {
+    console.warn(`GA4: no client_id available - skipping ${eventName} event`);
+    return;
+  }
+
+  try {
+    const response = await axios.post(
+      `https://www.google-analytics.com/mp/collect?measurement_id=${GA_MEASUREMENT_ID}&api_secret=${GA_API_SECRET}`,
+      {
+        client_id: clientId,
+        events: [{ name: eventName, params }],
+      }
+    );
+    console.log(`GA4 SUCCESS: ${eventName}`, response.status);
+  } catch (error) {
+    console.error(`GA4 ERROR: ${eventName}`, error.response?.data || error.message);
+    // Don't stop the signup process if GA4 fails — same swallow-and-log
+    // pattern as fireMetaEvent above.
   }
 }
 
@@ -336,9 +372,17 @@ app.post('/api/signup', async (req, res) => {
         claimUrl: claimData.claimUrl
       }),
       sendClaimEmail(lead, claimData.claimUrl, claimData.pageShortName),
+      fireGA4Event(lead.gaClientId, 'lead', { page_short_name: claimData.pageShortName }),
+      fireGA4Event(lead.gaClientId, 'claim_link_sent', {
+        page_short_name: claimData.pageShortName,
+        claim_url: claimData.claimUrl,
+      }),
     ]);
 
-    const stepNames = ['logToSheet', 'fireMetaEvent:Lead', 'fireMetaEvent:ClaimLinkSent', 'sendClaimEmail'];
+    const stepNames = [
+      'logToSheet', 'fireMetaEvent:Lead', 'fireMetaEvent:ClaimLinkSent', 'sendClaimEmail',
+      'fireGA4Event:lead', 'fireGA4Event:claim_link_sent',
+    ];
     results.forEach((r, i) => {
       if (r.status === 'rejected') {
         console.error(`STEP FAILED (non-blocking): ${stepNames[i]}:`, r.reason?.message || r.reason);

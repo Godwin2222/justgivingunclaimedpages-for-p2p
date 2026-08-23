@@ -32,6 +32,8 @@ const FUNDRAISING_TARGET = Number(process.env.FUNDRAISING_TARGET || 500);
 const META_PIXEL_ID = process.env.META_PIXEL_ID;
 const META_ACCESS_TOKEN = process.env.META_CONVERSIONS_API_TOKEN;
 const KLAVIYO_PRIVATE_API_KEY = process.env.KLAVIYO_PRIVATE_API_KEY;
+const GA_MEASUREMENT_ID = process.env.GA_MEASUREMENT_ID;
+const GA_API_SECRET = process.env.GA_API_SECRET;
 const SHEET_ID = process.env.GOOGLE_SHEET_ID;
 
 // Order matters — checked low to high so multiple milestones crossed
@@ -168,12 +170,40 @@ async function sendKlaviyoEvent(metricName, lead, properties = {}, profileProper
   console.log(`KLAVIYO SUCCESS (followup): ${metricName}`);
 }
 
+// ---------------- GA4 Measurement Protocol ----------------
+// clientId comes from the GA4 cookie captured at signup time (stored in
+// Sheet column N) — if a row has none (signed up before this feature, or
+// the visitor had GA blocked), we just skip sending for that row.
+async function fireGA4Event(clientId, eventName, params = {}) {
+  if (!GA_MEASUREMENT_ID || !GA_API_SECRET) {
+    console.warn(`GA4 CONFIG MISSING - Skipping ${eventName} event`);
+    return;
+  }
+  if (!clientId) {
+    console.warn(`GA4: no client_id for this row - skipping ${eventName} event`);
+    return;
+  }
+
+  try {
+    const response = await axios.post(
+      `https://www.google-analytics.com/mp/collect?measurement_id=${GA_MEASUREMENT_ID}&api_secret=${GA_API_SECRET}`,
+      {
+        client_id: clientId,
+        events: [{ name: eventName, params }],
+      }
+    );
+    console.log(`GA4 SUCCESS (followup): ${eventName}`, response.status);
+  } catch (error) {
+    console.error(`GA4 ERROR (followup): ${eventName}`, error.response?.data || error.message);
+  }
+}
+
 // ---------------- Google Sheet helpers ----------------
 async function getAllRows() {
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: SHEET_ID,
-    // K = Milestones Sent, L = No-Raise Reminders Sent
-    range: 'Tracker!A:L',
+    // K = Milestones Sent, L = No-Raise Reminders Sent, N = GA4 Client ID
+    range: 'Tracker!A:N',
   });
   return res.data.values || [];
 }
@@ -202,7 +232,9 @@ async function runFollowUpCheck() {
     const [
       name, email, phone, dateCaptured, claimUrl,
       sentStatus, claimedFlag, dateClaimed, amountRaised,
-      pageShortName, milestonesSentRaw, noRaiseSentRaw
+      pageShortName, milestonesSentRaw, noRaiseSentRaw,
+      , // M: Initial Consumer ID — unused, kept for column alignment
+      gaClientId
     ] = dataRows[i];
 
     const milestonesSent = (milestonesSentRaw || '').split(',').filter(Boolean).map(Number);
@@ -241,6 +273,7 @@ async function runFollowUpCheck() {
           { page_short_name: pageShortName, claim_url: claimUrl, page_url: pageUrl },
           { page_claimed: true }
         ),
+        fireGA4Event(gaClientId, 'page_claimed', { page_short_name: pageShortName, page_url: pageUrl }),
       ]);
     }
 
@@ -268,6 +301,12 @@ async function runFollowUpCheck() {
           },
           { percent_raised: percentRaised }
         );
+        await fireGA4Event(gaClientId, 'fundraising_milestone_reached', {
+          milestone_percent: milestone,
+          amount_raised: stats.raisedAmount,
+          target_amount: stats.targetAmount,
+          page_short_name: pageShortName,
+        });
       }
       updates.K = [...milestonesSent, ...newlyCrossed].join(',');
     }
@@ -292,6 +331,10 @@ async function runFollowUpCheck() {
           },
           { last_no_raise_nudge_day: dayMark }
         );
+        await fireGA4Event(gaClientId, 'no_fundraising_activity_reminder', {
+          days_since_signup: dayMark,
+          page_short_name: pageShortName,
+        });
       }
 
       if (newlyDueNudges.length > 0) {
