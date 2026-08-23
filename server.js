@@ -32,6 +32,7 @@ console.log('META CONFIG:', {
 });
 
 const KLAVIYO_PRIVATE_API_KEY = process.env.KLAVIYO_PRIVATE_API_KEY;
+const KLAVIYO_LIST_ID = process.env.KLAVIYO_LIST_ID;
 
 const GA_MEASUREMENT_ID = process.env.GA_MEASUREMENT_ID;
 const GA_API_SECRET = process.env.GA_API_SECRET;
@@ -263,6 +264,78 @@ async function fireGA4Event(clientId, eventName, params = {}) {
   }
 }
 
+// ---------------- Klaviyo: subscribe to email marketing ----------------
+// This is DIFFERENT from sendClaimEmail below. sendClaimEmail sends an
+// *event* (ClaimLinkSent) which updates the profile's data and can trigger
+// Flows — but it does NOT grant email marketing consent. Klaviyo tracks
+// subscription status separately, and a profile that's only ever received
+// events (never explicitly subscribed) defaults to "Never Subscribed" —
+// which means Flow emails get silently skipped, even though the Flow
+// itself triggers correctly and the profile looks completely normal.
+// This call is what actually marks them as consented to receive emails,
+// tied to the consent checkbox on the signup form.
+async function subscribeToKlaviyo(lead) {
+  if (!KLAVIYO_PRIVATE_API_KEY) {
+    console.warn('KLAVIYO CONFIG MISSING - Skipping subscription');
+    return;
+  }
+  if (!KLAVIYO_LIST_ID) {
+    console.warn('KLAVIYO_LIST_ID MISSING - Skipping subscription');
+    return;
+  }
+  if (!lead.consent) {
+    // Should never happen — the form requires this checkbox, and the
+    // signup endpoint already rejects requests without it. Just a safety
+    // net so we never subscribe someone without their consent on record.
+    return;
+  }
+
+  await axios.post(
+    'https://a.klaviyo.com/api/profile-subscription-bulk-create-jobs/',
+    {
+      data: {
+        type: 'profile-subscription-bulk-create-job',
+        attributes: {
+          profiles: {
+            data: [
+              {
+                type: 'profile',
+                attributes: {
+                  email: lead.email,
+                  first_name: lead.firstName,
+                  last_name: lead.lastName,
+                  subscriptions: {
+                    email: {
+                      marketing: {
+                        consent: 'SUBSCRIBED',
+                      },
+                    },
+                  },
+                },
+              },
+            ],
+          },
+        },
+        relationships: {
+          list: {
+            data: { type: 'list', id: KLAVIYO_LIST_ID },
+          },
+        },
+      },
+    },
+    {
+      headers: {
+        Authorization: `Klaviyo-API-Key ${KLAVIYO_PRIVATE_API_KEY}`,
+        'Content-Type': 'application/vnd.api+json',
+        Accept: 'application/json',
+        Revision: '2026-07-15',
+      },
+    }
+  );
+
+  console.log('KLAVIYO SUBSCRIBE SUCCESS');
+}
+
 // ---------------- STEP 4: send claim event to Klaviyo ----------------
 async function sendClaimEmail(lead, claimUrl, pageShortName) {
   console.log('KLAVIYO: Starting...');
@@ -370,6 +443,14 @@ app.post('/api/signup', async (req, res) => {
     console.log('STEP 1: Creating JustGiving page...');
     const claimData = await createUnclaimedPage(lead);
     console.log('STEP 1 SUCCESS:', claimData);
+
+    // Subscribe BEFORE firing any events that could trigger a Flow. Run
+    // sequentially (not bundled into the Promise.allSettled batch below) so
+    // there's no race condition where ClaimLinkSent fires and triggers a
+    // Flow before the subscription has actually landed on the profile.
+    await subscribeToKlaviyo(lead).catch((err) => {
+      console.error('KLAVIYO SUBSCRIBE FAILED (non-blocking):', err.response?.data || err.message);
+    });
 
     // From here on, failures are logged but must NOT fail the signup —
     // the supporter already has a real JustGiving page at this point.
