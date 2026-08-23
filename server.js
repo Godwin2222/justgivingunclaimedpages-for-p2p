@@ -302,8 +302,6 @@ async function subscribeToKlaviyo(lead) {
                 type: 'profile',
                 attributes: {
                   email: lead.email,
-                  first_name: lead.firstName,
-                  last_name: lead.lastName,
                   subscriptions: {
                     email: {
                       marketing: {
