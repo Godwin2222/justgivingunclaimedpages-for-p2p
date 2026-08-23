@@ -165,11 +165,13 @@ async function logToSheet(lead, claimData) {
     lead.hoodieSize || '',                                     // S: Hoodie Size
     lead.hikingReason || '',                                     // T: Hiking Reason
     lead.referralSource || '',                                    // U: Referral Source
+    lead.hikingLocation || '',                                     // V: Hiking Location (In-person/Remote)
+    lead.hikerLocationDetail || '',                                  // W: Hiker City/Country (if remote)
   ];
 
   await sheets.spreadsheets.values.append({
     spreadsheetId: SHEET_ID,
-    range: 'Tracker!A:U',
+    range: 'Tracker!A:W',
     valueInputOption: 'USER_ENTERED',
     requestBody: { values: [row] },
   });
